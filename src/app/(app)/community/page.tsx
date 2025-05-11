@@ -5,7 +5,7 @@ import { PageWrapper } from "@/components/layout/page-wrapper";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Users, ThumbsUp, MessageCircle, Share2, UploadCloud } from "lucide-react";
+import { Users, ThumbsUp, MessageCircle, Share2, UploadCloud, Trash2 } from "lucide-react";
 import Image from "next/image";
 import { useAuth } from "@/hooks/use-auth";
 import { firestore } from "@/lib/firebase";
@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatDistanceToNowStrict } from "date-fns";
 import { uploadToCloudinary } from "@/lib/cloudinary"; 
 import { Progress } from "@/components/ui/progress";
+import { Input } from "@/components/ui/input";
 
 interface CommunityPost {
   id: string;
@@ -125,7 +126,7 @@ export default function CommunityPage() {
     if (selectedFile) {
       try {
         const progressInterval = setInterval(() => {
-            setUploadProgress(prev => Math.min(prev + 10, 90)));
+            setUploadProgress(prev => Math.min(prev + 10, 90));
         }, 200);
         const cloudinaryResponse = await uploadToCloudinary(selectedFile);
         clearInterval(progressInterval);

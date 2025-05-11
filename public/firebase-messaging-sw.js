@@ -5,16 +5,16 @@ importScripts("https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"
 importScripts("https://www.gstatic.com/firebasejs/9.22.1/firebase-messaging-compat.js");
 
 // --- Firebase Project Configuration ---
-// These values are directly set based on the provided configuration.
-// For production, consider a build process to inject these values or a secure way to fetch them.
+// These values should match the ones used in your main application (src/lib/firebase.ts)
+// and should be for the 'chat-akmx' project.
 const firebaseConfig = {
-  apiKey: "AIzaSyBwsgPN_ZriWzPo9b7xodH-MtWyy_A7MYI",
-  authDomain: "black-chat-1.firebaseapp.com",
-  projectId: "black-chat-1",
-  storageBucket: "black-chat-1.firebasestorage.app",
-  messagingSenderId: "710462889318",
-  appId: "1:710462889318:web:3efe20d79c7a8b5eb3bca7",
-  measurementId: "G-3SNKN8NRN0" 
+  apiKey: "AIzaSyBBn_9sXiqfCcQ_RWm3FNUVEC2_wInKdqk",
+  authDomain: "chat-akmx.firebaseapp.com",
+  projectId: "chat-akmx",
+  storageBucket: "chat-akmx.firebasestorage.app",
+  messagingSenderId: "604325744401",
+  appId: "1:604325744401:web:57f38e056b00bb02da06b0",
+  measurementId: "G-GSX7G0799G" 
 };
 // --- End of Firebase Project Configuration ---
 
@@ -70,3 +70,4 @@ if (firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_FIREBASE_API_KEY" &
 } else {
     console.warn("[firebase-messaging-sw.js] Firebase configuration is missing valid values. Service worker will not function correctly.");
 }
+
