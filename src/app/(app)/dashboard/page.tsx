@@ -1,13 +1,13 @@
 
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { PageWrapper } from "@/components/layout/page-wrapper";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { LayoutDashboard, ListChecks, CalendarCheck, Users, Activity, MessageSquare as MessageSquareIcon } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
+import { LayoutDashboard, ListChecks, CalendarCheck, Users as UsersIcon, Activity, MessageSquare as MessageSquareIcon, CheckSquare, Newspaper } from "lucide-react";
 import { useAuth } from '@/hooks/use-auth';
 import { firestore } from '@/lib/firebase';
-import { collection, query, where, orderBy, limit, onSnapshot, Timestamp, getCountFromServer, getDocs } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, onSnapshot, Timestamp, getCountFromServer, getDocs, doc } from 'firebase/firestore';
 import { Skeleton } from '@/components/ui/skeleton';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,7 @@ import { formatDistanceToNowStrict } from 'date-fns';
 import type { Priority } from '@/components/planner/task-form'; 
 import { Badge } from '@/components/ui/badge'; 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import Image from "next/image";
 import { useRouter } from 'next/navigation';
 
 interface Task {
@@ -23,8 +24,10 @@ interface Task {
   completed: boolean;
   priority: Priority; 
   createdAt: Timestamp;
+  completedAt?: Timestamp;
   completedByUid?: string | null;
   completedByHandle?: string | null;
+  userId: string; // Creator of the task
 }
 
 interface UserProfile {
@@ -32,47 +35,77 @@ interface UserProfile {
   handle: string;
   email?: string;
   photoURL?: string | null;
-  // isOnline and lastSeen removed
+}
+
+interface CommunityPost {
+  id: string;
+  authorId: string;
+  authorHandle: string;
+  authorAvatarSeed?: string;
+  authorPhotoURL?: string | null;
+  content: string;
+  imageUrl?: string | null;
+  imageHint?: string;
+  createdAt: Timestamp;
+  likes: number; 
+  comments: number; 
 }
 
 interface DashboardStats {
-  incompleteTasks: number;
-  tasksToday: number;
-  totalUsersCount: number; // Changed from onlineUsersCount
+  incompleteTasks: number; // Current user's incomplete tasks
+  tasksToday: number; // Current user's tasks initiated today
+  totalUsersCount: number;
 }
-
-// FIVE_MINUTES_IN_MS removed
 
 export default function DashboardPage() {
   const { user, loading: authLoading, isFirebaseConfigured } = useAuth();
   const router = useRouter();
   const [stats, setStats] = useState<DashboardStats>({ incompleteTasks: 0, tasksToday: 0, totalUsersCount: 0 });
-  const [recentTasks, setRecentTasks] = useState<Task[]>([]);
-  const [allUsers, setAllUsers] = useState<UserProfile[]>([]); // Changed from onlineUsers
-  const [loadingDashboard, setLoadingDashboard] = useState(true);
+  const [recentTasks, setRecentTasks] = useState<Task[]>([]); // Will show all users' pending tasks
+  const [completedTasks, setCompletedTasks] = useState<Task[]>([]);
+  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
+  const [userHandlesMap, setUserHandlesMap] = useState<Record<string, string>>({});
+
+  const [latestCommunityPost, setLatestCommunityPost] = useState<CommunityPost | null>(null);
+  const [loadingLatestCommunityPost, setLoadingLatestCommunityPost] = useState(true);
+
+  const [loadingDashboardData, setLoadingDashboardData] = useState(true); // Combined loading for tasks and users
+  const [loadingCompletedTasksData, setLoadingCompletedTasksData] = useState(true);
+
 
   useEffect(() => {
     if (typeof document !== 'undefined') {
         document.title = 'Dashboard - Black HAT Commit';
     }
   }, []);
+  
+  useEffect(() => {
+    if (allUsers.length > 0) {
+      const map: Record<string, string> = {};
+      allUsers.forEach(u => {
+        if (u.handle) map[u.uid] = u.handle;
+      });
+      setUserHandlesMap(map);
+    }
+  }, [allUsers]);
 
+  // Fetch stats (user-specific) and recent tasks (all users)
   useEffect(() => {
     if (!user || !firestore || !isFirebaseConfigured) {
-      setLoadingDashboard(false);
+      setLoadingDashboardData(false);
       setStats({ incompleteTasks: 0, tasksToday: 0, totalUsersCount: 0 });
       setRecentTasks([]);
-      setAllUsers([]);
       return;
     }
 
-    setLoadingDashboard(true);
+    setLoadingDashboardData(true);
     const tasksCollectionRef = collection(firestore, "tasks");
 
-    const fetchStatsAndTasks = async () => {
+    // Fetch user-specific stats
+    const fetchUserStats = async () => {
       try {
-        const incompleteTasksQuery = query(tasksCollectionRef, where("userId", "==", user.uid), where("completed", "==", false));
-        const incompleteTasksSnapshot = await getCountFromServer(incompleteTasksQuery);
+        const incompleteUserTasksQuery = query(tasksCollectionRef, where("userId", "==", user.uid), where("completed", "==", false));
+        const incompleteTasksSnapshot = await getCountFromServer(incompleteUserTasksQuery);
         const incompleteCount = incompleteTasksSnapshot.data().count;
 
         const today = new Date();
@@ -88,79 +121,140 @@ export default function DashboardPage() {
         const todayCount = tasksTodaySnapshot.data().count;
 
         setStats(prevStats => ({ ...prevStats, incompleteTasks: incompleteCount, tasksToday: todayCount }));
-
-        const recentTasksQuery = query(
-          tasksCollectionRef,
-          where("userId", "==", user.uid),
-          orderBy("createdAt", "desc"),
-          limit(3)
-        );
-        const unsubscribeRecentTasks = onSnapshot(recentTasksQuery, (snapshot) => {
-          const fetchedTasks: Task[] = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          } as Task));
-          setRecentTasks(fetchedTasks);
-          if (!allUsers.length) setLoadingDashboard(false); 
-        }, (error) => {
-          console.error("Error fetching recent tasks:", error);
-          setRecentTasks([]);
-          if (!allUsers.length) setLoadingDashboard(false);
-        });
-        
-        return () => unsubscribeRecentTasks();
-
       } catch (error) {
-        console.error("Error fetching dashboard stats/tasks:", error);
+        console.error("Error fetching user stats:", error);
         setStats(prevStats => ({ ...prevStats, incompleteTasks: 0, tasksToday: 0 }));
-        setRecentTasks([]);
       }
     };
 
-    fetchStatsAndTasks();
-    
-  }, [user, isFirebaseConfigured, firestore]); 
+    fetchUserStats();
 
-  useEffect(() => {
+    // Fetch recent incomplete tasks from ALL users for the feed
+    const recentAllTasksQuery = query(
+      tasksCollectionRef,
+      where("completed", "==", false), 
+      orderBy("createdAt", "desc"),
+      limit(5) // Show 5 most recent pending tasks from anyone
+    );
+    const unsubscribeRecentTasks = onSnapshot(recentAllTasksQuery, (snapshot) => {
+      const fetchedTasks: Task[] = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Task));
+      setRecentTasks(fetchedTasks);
+      // Consider this part of dashboard data loading
+      if (allUsers.length > 0) setLoadingDashboardData(false); // If users also loaded
+    }, (error) => {
+      console.error("Error fetching recent all tasks:", error);
+      setRecentTasks([]);
+      if (allUsers.length > 0) setLoadingDashboardData(false);
+    });
+    
+    return () => {
+      unsubscribeRecentTasks();
+    };
+    
+  }, [user, isFirebaseConfigured, firestore, allUsers.length]); // Rerun if allUsers changes to potentially set loading false
+
+  // Fetch completed tasks (all users)
+  useEffect(() => { 
+    if (!user || !firestore || !isFirebaseConfigured) {
+        setCompletedTasks([]);
+        setLoadingCompletedTasksData(false);
+        return;
+    }
+    setLoadingCompletedTasksData(true);
+    const tasksCollectionRef = collection(firestore, "tasks");
+    const completedTasksQuery = query(
+        tasksCollectionRef,
+        where("completed", "==", true),
+        orderBy("completedAt", "desc"), // Order by completion time
+        limit(5) 
+    );
+    const unsubscribeCompletedTasks = onSnapshot(completedTasksQuery, (snapshot) => {
+        const fetchedCompletedTasks: Task[] = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        } as Task));
+        setCompletedTasks(fetchedCompletedTasks);
+        setLoadingCompletedTasksData(false);
+    }, (error) => {
+        console.error("Error fetching completed tasks:", error);
+        setCompletedTasks([]);
+        setLoadingCompletedTasksData(false);
+    });
+    return () => unsubscribeCompletedTasks();
+  }, [user, isFirebaseConfigured, firestore]);
+
+  // Fetch all users (for DMs list and resolving handles)
+  useEffect(() => { 
     if (!user || !firestore || !isFirebaseConfigured) {
         setAllUsers([]);
         setStats(prev => ({ ...prev, totalUsersCount: 0 }));
-        setLoadingDashboard(false);
+        if (!loadingCompletedTasksData) setLoadingDashboardData(false);
         return;
     }
-    setLoadingDashboard(true);
+    // Ensure this loading state is also part of the overall dashboard loading
     const usersCollectionRef = collection(firestore, "users");
-    const qUsers = query(usersCollectionRef, where("uid", "!=", user.uid)); 
+    const qUsers = query(usersCollectionRef); // Fetch all users to count and for handles
 
     const fetchAllUsers = async () => {
         try {
             const snapshot = await getDocs(qUsers);
             const fetchedUsers = snapshot.docs
-                .map(doc => doc.data() as UserProfile)
+                .map(docData => docData.data() as UserProfile)
                 .sort((a,b) => (a.handle > b.handle) ? 1 : -1); 
 
-            setAllUsers(fetchedUsers);
-            setStats(prevStats => ({ ...prevStats, totalUsersCount: fetchedUsers.length }));
-            setLoadingDashboard(false); 
+            setAllUsers(fetchedUsers.filter(u => u.uid !== user.uid)); // For DM list, exclude self
+            setStats(prevStats => ({ ...prevStats, totalUsersCount: snapshot.docs.length -1 })); // Count all others
         } catch (error) {
             console.error("Error fetching all users:", error);
             setAllUsers([]);
             setStats(prevStats => ({ ...prevStats, totalUsersCount: 0 }));
-            setLoadingDashboard(false);
+        } finally {
+           // If recent tasks are already loaded or failed to load, set dashboard loading to false
+           if (recentTasks.length > 0 || !loadingDashboardData) setLoadingDashboardData(false);
         }
     };
     fetchAllUsers();
-    // No onSnapshot here to reduce reads for this list unless frequent updates are critical
-  }, [user, isFirebaseConfigured, firestore]);
+  }, [user, isFirebaseConfigured, firestore, loadingCompletedTasksData, recentTasks.length, loadingDashboardData]);
+
+  // Fetch latest community post
+  useEffect(() => {
+    if (!firestore || !isFirebaseConfigured) {
+      setLoadingLatestCommunityPost(false);
+      setLatestCommunityPost(null);
+      return;
+    }
+    setLoadingLatestCommunityPost(true);
+    const postsCollectionRef = collection(firestore, "communityPosts");
+    const q = query(postsCollectionRef, orderBy("createdAt", "desc"), limit(1));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        const postDoc = snapshot.docs[0];
+        setLatestCommunityPost({ id: postDoc.id, ...postDoc.data() } as CommunityPost);
+      } else {
+        setLatestCommunityPost(null);
+      }
+      setLoadingLatestCommunityPost(false);
+    }, (error) => {
+      console.error("Error fetching latest community post:", error);
+      setLatestCommunityPost(null);
+      setLoadingLatestCommunityPost(false);
+    });
+    return () => unsubscribe();
+  }, [isFirebaseConfigured, firestore]);
+
 
   const handleUserClick = (targetUser: UserProfile) => {
     router.push(`/messages?dm=${targetUser.uid}`);
   };
   
   const dashboardCards = [
-    { title: "Pending Directives", value: stats.incompleteTasks, icon: <ListChecks className="h-6 w-6 text-primary" />, dataAiHint: "checklist tasks" },
-    { title: "Ops Initiated Today", value: stats.tasksToday, icon: <CalendarCheck className="h-6 w-6 text-primary" />, dataAiHint: "calendar task" },
-    { title: "Total Operatives", value: stats.totalUsersCount, icon: <Users className="h-6 w-6 text-primary" />, dataAiHint: "people group" },
+    { title: "Pending Directives (Yours)", value: stats.incompleteTasks, icon: <ListChecks className="h-6 w-6 text-primary" />, dataAiHint: "checklist tasks" },
+    { title: "Ops Initiated Today (Yours)", value: stats.tasksToday, icon: <CalendarCheck className="h-6 w-6 text-primary" />, dataAiHint: "calendar task" },
+    { title: "Total Operatives", value: stats.totalUsersCount, icon: <UsersIcon className="h-6 w-6 text-primary" />, dataAiHint: "people group" },
   ];
   
   if (authLoading && !isFirebaseConfigured) {
@@ -189,10 +283,12 @@ export default function DashboardPage() {
     );
   }
 
+  const overallLoading = loadingDashboardData || authLoading || loadingCompletedTasksData || loadingLatestCommunityPost;
+
   return (
-    <PageWrapper title="System Overview" titleIcon={<LayoutDashboard />} description={`Welcome, ${user?.displayName || user?.email?.split('@')[0] || 'Operative'}. Command center online.`}>
+    <PageWrapper title="System Overview" titleIcon={<LayoutDashboard />} description={`Welcome, ${user?.handle || user?.displayName || user?.email?.split('@')[0] || 'Operative'}. Command center online.`}>
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {(loadingDashboard && authLoading) || (loadingDashboard && !authLoading && user) ? (
+        {overallLoading && stats.incompleteTasks === 0 && stats.tasksToday === 0 && stats.totalUsersCount === 0 ? (
           [...Array(3)].map((_, i) => (
             <Card key={i} className="shadow-lg border-primary/30">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -224,17 +320,17 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
         <Card className="lg:col-span-2 shadow-lg border-primary/30">
           <CardHeader>
-            <CardTitle className="text-xl text-glow-primary">Recent Activity Feed</CardTitle>
+            <CardTitle className="text-xl text-glow-primary">Recent Activity Feed (All Pending Tasks)</CardTitle>
           </CardHeader>
           <CardContent className="pt-6">
-            {loadingDashboard && recentTasks.length === 0 ? ( // Show skeleton only if tasks aren't loaded yet
+            {loadingDashboardData && recentTasks.length === 0 ? (
               <div className="space-y-3">
                 {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
               </div>
             ) : recentTasks.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <Activity className="h-12 w-12 mx-auto mb-4 text-primary/50" />
-                <p>No recent activity in your log.</p>
+                <p>No pending tasks in the global log.</p>
                 <p className="text-sm">Start by adding a new task in the planner.</p>
                 <Button asChild variant="link" className="mt-2 text-primary hover:text-glow-primary">
                   <Link href="/planner">Go to Planner</Link>
@@ -242,12 +338,16 @@ export default function DashboardPage() {
               </div>
             ) : (
               <ul className="space-y-3">
-                {recentTasks.map(task => (
+                {recentTasks.map(task => {
+                  const creatorHandle = task.userId === user.uid ? "You" : (userHandlesMap[task.userId] || "Another Operative");
+                  return (
                   <li key={task.id} className={`flex items-center justify-between p-3 rounded-md border ${task.completed ? "border-green-500/20 bg-green-500/5" : "border-border/70"}`}>
                     <div>
                       <p className={`text-sm font-medium ${task.completed ? "line-through text-muted-foreground" : "text-foreground"}`}>{task.text}</p>
                       <div className="flex items-center text-xs text-muted-foreground">
-                        <span>{task.completed ? "Completed" : "Added"} {task.createdAt ? formatDistanceToNowStrict(task.createdAt.toDate(), { addSuffix: true }) : ''}</span>
+                        <span>Added by: {creatorHandle}</span>
+                        <span className='mx-1'>·</span>
+                        <span>{task.createdAt ? formatDistanceToNowStrict(task.createdAt.toDate(), { addSuffix: true }) : ''}</span>
                         <Badge 
                           variant={task.priority === "Critical" ? "destructive" : task.priority === "High" ? "secondary" : task.priority === "Medium" ? "default" : "outline"} 
                           className={`ml-2 scale-75 origin-left ${
@@ -260,7 +360,7 @@ export default function DashboardPage() {
                           {task.priority}
                         </Badge>
                          {task.completed && task.completedByHandle && (
-                          <span className="ml-2 text-green-400">(By: {task.completedByHandle === (user?.displayName || user?.email?.split('@')[0]) ? "You" : task.completedByHandle})</span>
+                          <span className="ml-2 text-green-400">(Completed By: {task.completedByHandle === (user?.handle || user?.displayName || user?.email?.split('@')[0]) ? "You" : task.completedByHandle})</span>
                         )}
                       </div>
                     </div>
@@ -268,7 +368,7 @@ export default function DashboardPage() {
                       <Button variant="ghost" size="sm" className="text-xs text-primary hover:text-glow-primary">View</Button>
                     </Link>
                   </li>
-                ))}
+                )})}
               </ul>
             )}
             {recentTasks.length > 0 && (
@@ -286,7 +386,7 @@ export default function DashboardPage() {
             <CardTitle className="text-xl text-glow-primary">All Operatives</CardTitle>
           </CardHeader>
           <CardContent className="pt-6 max-h-96 overflow-y-auto">
-            {loadingDashboard && allUsers.length === 0 ? ( // Show skeleton only if users aren't loaded
+            {loadingDashboardData && allUsers.length === 0 ? ( 
               <div className="space-y-2">
                 {[...Array(3)].map((_, i) => (
                     <div key={i} className="flex items-center space-x-3 p-2">
@@ -308,12 +408,11 @@ export default function DashboardPage() {
                       <Avatar className="h-10 w-10 border-2 border-accent group-hover:border-primary transition-colors">
                         <AvatarImage src={opUser.photoURL || `https://picsum.photos/seed/${opUser.uid}/40/40`} alt={opUser.handle} data-ai-hint="hacker avatar small" />
                         <AvatarFallback className="bg-accent text-accent-foreground group-hover:bg-primary group-hover:text-primary-foreground">
-                          {opUser.handle[0].toUpperCase()}
+                          {opUser.handle?.[0]?.toUpperCase()}
                         </AvatarFallback>
                       </Avatar>
                       <div>
                         <p className="text-sm font-medium text-foreground group-hover:text-glow-primary">{opUser.handle}</p>
-                        {/* Online status / last seen removed */}
                       </div>
                       <MessageSquareIcon className="ml-auto h-5 w-5 text-primary opacity-0 group-hover:opacity-100 transition-opacity" />
                     </button>
@@ -324,6 +423,99 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="mt-8 shadow-lg border-primary/30">
+        <CardHeader>
+          <CardTitle className="text-xl text-glow-primary flex items-center"><Newspaper className="mr-2 h-5 w-5"/> Latest Community Dispatch</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-6">
+          {loadingLatestCommunityPost ? (
+            <Skeleton className="h-40 w-full" />
+          ) : latestCommunityPost ? (
+            <div>
+              <div className="flex items-center space-x-3 mb-3">
+                  <Avatar className="h-10 w-10 border-2 border-accent">
+                    <AvatarImage src={latestCommunityPost.authorPhotoURL || `https://picsum.photos/seed/${latestCommunityPost.authorAvatarSeed || latestCommunityPost.authorId}/40/40`} alt={latestCommunityPost.authorHandle} data-ai-hint="hacker avatar"/>
+                    <AvatarFallback>{latestCommunityPost.authorHandle[0].toUpperCase()}</AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <p className="font-medium text-glow-accent">{latestCommunityPost.authorHandle}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Posted {latestCommunityPost.createdAt ? formatDistanceToNowStrict(latestCommunityPost.createdAt.toDate(), { addSuffix: true }) : 'just now'}
+                    </p>
+                  </div>
+              </div>
+              <p className="text-foreground/90 mb-3 whitespace-pre-wrap text-sm">{latestCommunityPost.content.substring(0,200)}{latestCommunityPost.content.length > 200 ? "..." : ""}</p>
+              {latestCommunityPost.imageUrl && (
+                  <div className="rounded-md overflow-hidden border border-border aspect-video relative mb-3 max-h-64">
+                    <Image src={latestCommunityPost.imageUrl} alt="Post image" layout="fill" objectFit="cover" data-ai-hint={latestCommunityPost.imageHint || "community image"} />
+                  </div>
+              )}
+              <div className="mt-4 text-right">
+                <Button asChild variant="outline" className="border-accent text-accent hover:bg-accent/10">
+                  <Link href="/community">View in Community</Link>
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              <Newspaper className="h-12 w-12 mx-auto mb-4 text-primary/50" />
+              <p>No community dispatches found recently.</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+
+      <Card className="mt-8 shadow-lg border-primary/30">
+        <CardHeader>
+          <CardTitle className="text-xl text-glow-primary flex items-center"><CheckSquare className="mr-2 h-5 w-5"/> Recently Completed Ops (All Users)</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-6">
+            {loadingCompletedTasksData ? (
+                <div className="space-y-3">
+                    {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+                </div>
+            ) : completedTasks.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                    <CheckSquare className="h-12 w-12 mx-auto mb-4 text-primary/50" />
+                    <p>No operations marked as complete recently.</p>
+                </div>
+            ) : (
+                <ul className="space-y-3">
+                    {completedTasks.map(task => (
+                        <li key={task.id} className="flex items-center justify-between p-3 rounded-md border border-green-500/30 bg-green-500/10">
+                            <div>
+                                <p className="text-sm font-medium line-through text-muted-foreground">{task.text}</p>
+                                <div className="flex items-center text-xs text-muted-foreground">
+                                    <span>Completed by: {task.completedByHandle || 'Unknown'}</span>
+                                    <span className="mx-1">·</span>
+                                    <span>{task.completedAt ? formatDistanceToNowStrict(task.completedAt.toDate(), { addSuffix: true }) : (task.createdAt ? `(Created: ${formatDistanceToNowStrict(task.createdAt.toDate(), { addSuffix: true })})` : '')}</span>
+                                     <Badge 
+                                        variant={task.priority === "Critical" ? "destructive" : task.priority === "High" ? "secondary" : task.priority === "Medium" ? "default" : "outline"} 
+                                        className="ml-2 scale-75 origin-left opacity-70"
+                                        >
+                                        {task.priority}
+                                    </Badge>
+                                </div>
+                            </div>
+                            <Link href="/planner">
+                                <Button variant="ghost" size="sm" className="text-xs text-primary hover:text-glow-primary">Details</Button>
+                            </Link>
+                        </li>
+                    ))}
+                </ul>
+            )}
+             {completedTasks.length > 0 && (
+               <div className="mt-4 text-right">
+                  <Button asChild variant="outline" className="border-accent text-accent hover:bg-accent/10">
+                    <Link href="/planner">View All Tasks in Planner</Link>
+                  </Button>
+               </div>
+            )}
+        </CardContent>
+      </Card>
     </PageWrapper>
   );
 }
+

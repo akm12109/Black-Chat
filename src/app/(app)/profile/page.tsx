@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { UserCircle, Edit3, ShieldCheck, AtSign, Mail, LogIn, UploadCloud, Camera, XCircle } from "lucide-react";
+import { UserCircle, Edit3, ShieldCheck, AtSign, Mail, LogIn, UploadCloud, Camera, XCircle, Info } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useRouter } from "next/navigation";
 import React, { useEffect, useState, useRef } from "react";
@@ -17,8 +17,9 @@ import { useToast } from "@/hooks/use-toast";
 import { uploadToCloudinary } from "@/lib/cloudinary";
 import { auth, firestore } from "@/lib/firebase"; 
 import { updateProfile } from "firebase/auth";
-import { doc, updateDoc, getDoc, serverTimestamp } from "firebase/firestore";
+import { doc, updateDoc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { Progress } from "@/components/ui/progress";
+import { Alert, AlertDescription as AlertDescriptionUI, AlertTitle } from "@/components/ui/alert";
 
 
 export default function ProfilePage() {
@@ -31,6 +32,7 @@ export default function ProfilePage() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [userJoinedDate, setUserJoinedDate] = useState<string | null>(null);
+  const [canChangeAvatar, setCanChangeAvatar] = useState(true); // New state
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -46,21 +48,27 @@ export default function ProfilePage() {
       getDoc(userDocRef).then(docSnap => {
         if (docSnap.exists()) {
           const data = docSnap.data();
-          if (data.createdAt && data.createdAt.toDate) { // Check if createdAt is a Firebase Timestamp
+          if (data.createdAt && data.createdAt.toDate) { 
             setUserJoinedDate(data.createdAt.toDate().toLocaleDateString());
-          } else if (user.metadata.creationTime) { // Fallback to auth metadata if Firestore one is missing/invalid
+          } else if (user.metadata.creationTime) { 
              setUserJoinedDate(new Date(user.metadata.creationTime).toLocaleDateString());
           } else {
             setUserJoinedDate("N/A");
           }
-        } else { // If user doc doesn't exist, use auth metadata and try to create doc
+          // Check if user can change avatar
+          if (user.photoURL && !user.photoURL.includes('picsum.photos')) {
+            setCanChangeAvatar(false);
+          } else {
+            setCanChangeAvatar(true);
+          }
+
+        } else { 
           if (user.metadata.creationTime) {
             setUserJoinedDate(new Date(user.metadata.creationTime).toLocaleDateString());
           } else {
             setUserJoinedDate("N/A");
           }
-          // Attempt to create the user document if it's missing
-          // This is a fallback, ideally AuthProvider or signup creates this.
+          setCanChangeAvatar(true); // New user can change avatar
           setDoc(userDocRef, {
             uid: user.uid,
             email: user.email,
@@ -71,23 +79,33 @@ export default function ProfilePage() {
         }
       }).catch(error => {
         console.error("Error fetching user creation date:", error);
-        // Fallback to auth metadata if Firestore fetch fails
         if (user.metadata.creationTime) {
           setUserJoinedDate(new Date(user.metadata.creationTime).toLocaleDateString());
         } else {
           setUserJoinedDate("N/A");
         }
+        // Fallback check for avatar change permission
+        if (user.photoURL && !user.photoURL.includes('picsum.photos')) {
+          setCanChangeAvatar(false);
+        } else {
+          setCanChangeAvatar(true);
+        }
       });
-    } else if (user && user.metadata.creationTime) { // Fallback if firestore is not available
+    } else if (user && user.metadata.creationTime) { 
         setUserJoinedDate(new Date(user.metadata.creationTime).toLocaleDateString());
+        if (user.photoURL && !user.photoURL.includes('picsum.photos')) {
+          setCanChangeAvatar(false);
+        } else {
+          setCanChangeAvatar(true);
+        }
     } else {
         setUserJoinedDate("N/A");
+        setCanChangeAvatar(true);
     }
-  }, [user, firestore, isFirebaseConfigured]);
+  }, [user, firestore, isFirebaseConfigured, loading]);
 
 
   useEffect(() => {
-    // Cleanup object URL
     return () => {
       if (imagePreview) {
         URL.revokeObjectURL(imagePreview);
@@ -96,11 +114,12 @@ export default function ProfilePage() {
   }, [imagePreview]);
 
   const handleAvatarClick = () => {
-    if (isUploading) return;
+    if (isUploading || !canChangeAvatar) return;
     fileInputRef.current?.click();
   };
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canChangeAvatar) return;
     if (event.target.files && event.target.files[0]) {
       const file = event.target.files[0];
       if (file.size > 5 * 1024 * 1024) { 
@@ -133,8 +152,8 @@ export default function ProfilePage() {
   };
 
   const handleSavePhoto = async () => {
-    if (!selectedFile || !user || !auth.currentUser || !firestore) { // auth.currentUser check
-      toast({ variant: "destructive", title: "Error", description: "Cannot save photo. User or Firebase not available." });
+    if (!selectedFile || !user || !auth.currentUser || !firestore || !canChangeAvatar) { 
+      toast({ variant: "destructive", title: "Error", description: "Cannot save photo. User, Firebase not available, or photo already set." });
       return;
     }
 
@@ -158,6 +177,7 @@ export default function ProfilePage() {
       setSelectedFile(null);
       setImagePreview(null); 
       if(fileInputRef.current) fileInputRef.current.value = "";
+      setCanChangeAvatar(false); // After successful upload, prevent further changes
 
     } catch (error: any) {
       clearInterval(progressInterval);
@@ -240,9 +260,9 @@ export default function ProfilePage() {
         <CardHeader className="flex flex-col items-center text-center md:flex-row md:text-left md:space-x-6">
           <div className="relative group">
             <Avatar 
-              className="h-24 w-24 border-4 border-primary mb-4 md:mb-0 cursor-pointer group-hover:opacity-80 transition-opacity"
+              className={`h-24 w-24 border-4 border-primary mb-4 md:mb-0 ${canChangeAvatar ? 'cursor-pointer group-hover:opacity-80' : 'cursor-default'} transition-opacity`}
               onClick={handleAvatarClick}
-              title="Click to change photo"
+              title={canChangeAvatar ? "Click to change photo" : "Profile photo already set"}
             >
               <AvatarImage 
                 src={currentAvatarSrc} 
@@ -251,16 +271,18 @@ export default function ProfilePage() {
               />
               <AvatarFallback className="text-3xl bg-primary text-primary-foreground">{userHandle?.[0]?.toUpperCase()}</AvatarFallback>
             </Avatar>
-            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 rounded-full" onClick={handleAvatarClick}>
-                <Camera className="h-8 w-8 text-white" />
-            </div>
+            {canChangeAvatar && (
+                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 rounded-full" onClick={handleAvatarClick}>
+                    <Camera className="h-8 w-8 text-white" />
+                </div>
+            )}
             <Input 
                 type="file" 
                 ref={fileInputRef} 
                 onChange={handleFileChange} 
                 className="hidden" 
                 accept="image/jpeg,image/png,image/gif,image/webp" 
-                disabled={isUploading}
+                disabled={isUploading || !canChangeAvatar}
             />
           </div>
 
@@ -270,7 +292,7 @@ export default function ProfilePage() {
               <ShieldCheck className="h-4 w-4 mr-1.5" /> Active Operative
             </CardDescription>
             <p className="text-xs text-muted-foreground mt-1">Joined: {userJoinedDate || <Skeleton className="h-3 w-20 inline-block" />}</p>
-             {selectedFile && !isUploading && (
+             {selectedFile && !isUploading && canChangeAvatar && (
               <div className="mt-3 flex gap-2 justify-center md:justify-start">
                 <Button onClick={handleSavePhoto} size="sm" variant="default">
                   <UploadCloud className="mr-2 h-4 w-4" /> Save Photo
@@ -286,6 +308,15 @@ export default function ProfilePage() {
                     <p className="text-xs text-muted-foreground text-center md:text-left mt-1">Uploading...</p>
                 </div>
             )}
+             {!canChangeAvatar && !selectedFile && (
+                 <Alert variant="default" className="mt-3 text-sm border-accent/30 bg-accent/10">
+                    <Info className="h-4 w-4 text-accent" />
+                    <AlertTitle className="text-accent">Profile Picture Set</AlertTitle>
+                    <AlertDescriptionUI className="text-accent/80">
+                        Your avatar has been set. It cannot be changed further at this time.
+                    </AlertDescriptionUI>
+                </Alert>
+             )}
           </div>
           <Button variant="outline" className="mt-4 md:mt-0 border-accent text-accent hover:bg-accent/10" disabled>
             <Edit3 className="mr-2 h-4 w-4" /> Edit Profile (Disabled)
@@ -303,7 +334,7 @@ export default function ProfilePage() {
         </CardContent>
         <CardFooter className="border-t border-border pt-6">
           <p className="text-xs text-muted-foreground">
-            For security reasons, some information cannot be changed directly. Contact support for assistance.
+            For security reasons, some information cannot be changed directly. Contact support for assistance. Profile picture can be set once.
           </p>
         </CardFooter>
       </Card>

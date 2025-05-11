@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -8,7 +9,7 @@ import { buttonVariants } from "@/components/ui/button"
 
 const AlertDialog = AlertDialogPrimitive.Root
 
-const AlertDialogTrigger = AlertDialogPrimitive.Trigger
+const AlertDialogTrigger = AlertDialogPrimitive.Trigger // This is the one sometimes aliased
 
 const AlertDialogPortal = AlertDialogPrimitive.Portal
 
@@ -130,7 +131,8 @@ export {
   AlertDialog,
   AlertDialogPortal,
   AlertDialogOverlay,
-  AlertDialogTrigger,
+  AlertDialogTrigger, // Exporting the original Radix Trigger
+  AlertDialogTrigger as AlertDialogPrimitiveTrigger, // Exporting with an alias for clarity if needed elsewhere
   AlertDialogContent,
   AlertDialogHeader,
   AlertDialogFooter,

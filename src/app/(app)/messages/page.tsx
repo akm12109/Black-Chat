@@ -58,7 +58,7 @@ export default function MessagesPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [loadingChannels, setLoadingChannels] = useState(true);
-  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [loadingMessages, setLoadingMessages] = useState(true); // Start true
   const [showChatViewOnMobile, setShowChatViewOnMobile] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -69,8 +69,26 @@ export default function MessagesPage() {
     }
   }, []);
 
-  const handleSelectChannel = useCallback(async (channel: Channel) => {
-    if (!user || !firestore) return;
+  const handleSelectChannel = useCallback(async (channel: Channel | null) => {
+    if (!user || !firestore) {
+        setSelectedChannel(null); // Clear selection if user/firestore not available
+        if (isMobile) setShowChatViewOnMobile(false);
+        return;
+    }
+    
+    if (!channel) {
+        setSelectedChannel(null);
+        if (isMobile) setShowChatViewOnMobile(false);
+        return;
+    }
+
+    // If the channel is already selected, only ensure mobile view is correct
+    if (selectedChannel?.id === channel.id) {
+        if (isMobile && !showChatViewOnMobile) {
+            setShowChatViewOnMobile(true);
+        }
+        return; 
+    }
 
     const channelDocRef = doc(firestore, "channels", channel.id);
     try {
@@ -91,7 +109,7 @@ export default function MessagesPage() {
                 };
             }
             await setDoc(channelDocRef, channelDataToSet);
-        } else if (!channel.isDM) { // For group channels, ensure user is a member
+        } else if (!channel.isDM) { 
             const existingData = channelSnap.data();
             const currentMembers = existingData?.members || [];
             if (!currentMembers.includes(user.uid)) {
@@ -104,15 +122,20 @@ export default function MessagesPage() {
     } catch (error) {
         console.error("Error ensuring channel exists/user is member:", error);
         toast({ variant: 'destructive', title: 'Channel Error', description: 'Could not access or update channel data.' });
+        setSelectedChannel(null); // Clear selection on error
+        if (isMobile) setShowChatViewOnMobile(false);
         return; 
     }
     
     setSelectedChannel(channel);
     setNewMessage("");
+    setMessages([]); // Clear previous messages
+    setLoadingMessages(true); // Set loading for new channel messages
+
     if (isMobile) {
         setShowChatViewOnMobile(true);
     }
-  }, [user, firestore, isMobile, toast]);
+  }, [user, firestore, isMobile, toast, selectedChannel?.id, showChatViewOnMobile]);
 
 
   const ensureDmChannelExists = useCallback(async (dmUserId: string): Promise<Channel | null> => {
@@ -190,7 +213,7 @@ export default function MessagesPage() {
     return dmChannelObject;
   }, [user, firestore, toast]);
 
-  useEffect(() => {
+  useEffect(() => { // Fetch Group Channels
     if (!isFirebaseConfigured || !user || !firestore) {
         const placeholderChannels = PREDEFINED_CHANNELS_CONFIG.map(pConfig => ({
             ...pConfig,
@@ -200,6 +223,7 @@ export default function MessagesPage() {
         }));
         setChannels(placeholderChannels);
         setLoadingChannels(false);
+        setLoadingMessages(false); // No channels, no messages to load
         return;
     }
     setLoadingChannels(true);
@@ -216,7 +240,7 @@ export default function MessagesPage() {
                 const newGroupChannelData = {
                     name: pConfig.name,
                     isDM: false,
-                    members: [user.uid], // Initially add current user
+                    members: [user.uid], 
                     lastActivity: serverTimestamp(),
                 };
                 try {
@@ -227,32 +251,30 @@ export default function MessagesPage() {
                 }
             }
         }
-        if(!madeChangesToFirestore) { 
-            setChannels(prev => {
-                const dms = prev.filter(ch => ch.isDM); // Keep existing DMs
-                const uniqueGroupChannels = fetchedGroupChannels.filter(fgc => !dms.find(d => d.id === fgc.id));
-                return [...uniqueGroupChannels, ...dms].sort((a, b) => (a.name || "").toLowerCase().localeCompare((b.name || "").toLowerCase()));
-            });
-            setLoadingChannels(false);
-        } else {
-            // If changes were made, let the next snapshot update the state naturally or re-fetch.
-            // For simplicity, rely on next snapshot or a manual re-fetch if needed.
-            // Here, just setting loading to false if it was a creation operation.
-            setLoadingChannels(false);
-        }
+        // Update state with fetched group channels, preserving existing DMs
+        setChannels(prev => {
+            const dms = prev.filter(ch => ch.isDM);
+            const uniqueGroupChannels = fetchedGroupChannels.filter(fgc => !dms.find(d => d.id === fgc.id));
+            return [...uniqueGroupChannels, ...dms].sort((a, b) => (a.name || "").toLowerCase().localeCompare((b.name || "").toLowerCase()));
+        });
+        if(!madeChangesToFirestore) setLoadingChannels(false);
+
     }, (err) => {
         console.error("Error fetching group channels:", err);
         toast({ variant: 'destructive', title: 'Error', description: 'Failed to load group channels.' });
+        setChannels(prev => prev.filter(ch => ch.isDM)); // Keep DMs if group fetching fails
         setLoadingChannels(false);
     });
     return () => unsubGroupChannels();
   }, [isFirebaseConfigured, user, firestore, toast]);
 
-  useEffect(() => { // For DMs based on other users
+  useEffect(() => { // Fetch Users for DMs
     if (!isFirebaseConfigured || !user || !firestore) return;
 
     const usersRef = collection(firestore, "users");
-    const qUsers = query(usersRef, where("uid", "!=", user.uid)); 
+    // Query users excluding the current user, limited for performance if many users exist.
+    // Adjust limit as needed or implement search/pagination for users.
+    const qUsers = query(usersRef, where("uid", "!=", user.uid), limit(20)); 
     
     const unsubUsers = onSnapshot(qUsers, (snapshot) => {
         const dmChannelStubs: Channel[] = snapshot.docs.map(docData => {
@@ -278,61 +300,90 @@ export default function MessagesPage() {
 
         setChannels(prev => {
             const groups = prev.filter(ch => !ch.isDM);
-            const newDmList = dmChannelStubs.filter(stub => !groups.find(g => g.id === stub.id)); // Avoid ID collision with group channels
-            const updatedChannels = [...groups, ...newDmList].sort((a,b) => (a.name||"").toLowerCase().localeCompare((b.name||"").toLowerCase()));
+            // Merge new DM stubs with existing DMs, preferring existing ones if ID matches (e.g., to keep lastActivity)
+            const existingDmIds = new Set(prev.filter(ch => ch.isDM).map(ch => ch.id));
+            const newUniqueDms = dmChannelStubs.filter(stub => !existingDmIds.has(stub.id));
+            const allDms = [...prev.filter(ch => ch.isDM), ...newUniqueDms];
             
+            const updatedChannels = [...groups, ...allDms].sort((a,b) => (a.name||"").toLowerCase().localeCompare((b.name||"").toLowerCase()));
+            
+             // If a DM channel was selected, try to update its info (e.g., photoURL)
             if (selectedChannel && selectedChannel.isDM && selectedChannel.otherUserId) {
-                const updatedInfo = newDmList.find(c => c.id === selectedChannel.id);
-                if (updatedInfo) {
+                const updatedInfo = dmChannelStubs.find(c => c.id === selectedChannel.id);
+                if (updatedInfo && (selectedChannel.otherUserHandle !== updatedInfo.otherUserHandle || selectedChannel.otherUserPhotoURL !== updatedInfo.otherUserPhotoURL)) {
                     setSelectedChannel(currentSelected => ({...currentSelected!, ...updatedInfo}));
                 }
             }
             return updatedChannels;
         });
-        setLoadingChannels(false); 
+        // Only set loadingChannels to false if it was true.
+        // This might be set by group channel loading too.
+        if(loadingChannels) setLoadingChannels(false); 
     }, (err) => {
         console.error("Error fetching users for DMs:", err);
         toast({ variant: 'destructive', title: 'Error', description: 'Failed to load user list for DMs.' });
-        setLoadingChannels(false);
+        if(loadingChannels) setLoadingChannels(false);
     });
     return () => unsubUsers();
-  }, [isFirebaseConfigured, user, firestore, toast, selectedChannel]);
+  }, [isFirebaseConfigured, user, firestore, toast, loadingChannels, selectedChannel]);
 
-  useEffect(() => {
-    if (loadingChannels || !user || !channels.length) return;
+
+  // Auto-select channel from URL param or default
+ useEffect(() => {
+    if (authLoading || loadingChannels || !user || !channels.length) {
+      if (!authLoading && !loadingChannels && channels.length === 0) { // No channels at all
+          setLoadingMessages(false);
+      }
+      return;
+    }
 
     const dmUserIdFromParams = searchParams.get('dm');
+    let channelToSelect: Channel | null = null;
 
     if (dmUserIdFromParams && dmUserIdFromParams !== user.uid) {
         const existingDm = channels.find(ch => ch.isDM && ch.otherUserId === dmUserIdFromParams);
         if (existingDm) {
-            if (!selectedChannel || selectedChannel.id !== existingDm.id) {
-                handleSelectChannel(existingDm);
-            }
+            channelToSelect = existingDm;
         } else {
+            // DM channel doesn't exist in current list, try to ensure/create it
             ensureDmChannelExists(dmUserIdFromParams).then(newlyEnsuredDm => {
                 if (newlyEnsuredDm) {
+                    // Add to channels list if not already there (e.g., from a race condition)
                     setChannels(prev => { 
                         if (!prev.find(ch => ch.id === newlyEnsuredDm.id)) {
                            return [...prev, newlyEnsuredDm].sort((a,b) => (a.name || "").toLowerCase().localeCompare((b.name || "").toLowerCase()));
                         }
                         return prev;
                     });
-                    handleSelectChannel(newlyEnsuredDm);
+                    if (selectedChannel?.id !== newlyEnsuredDm.id) {
+                        handleSelectChannel(newlyEnsuredDm);
+                    }
+                } else {
+                     // Failed to ensure DM channel, select default if nothing else selected
+                    if (!selectedChannel && channels.length > 0) {
+                        handleSelectChannel(channels.find(ch => !ch.isDM || (ch.isDM && ch.otherUserId !== user.uid)) || null);
+                    }
                 }
             });
+            return; // ensureDmChannelExists is async, handleSelectChannel will be called within its .then()
         }
-    } else if (!selectedChannel && channels.length > 0 && !dmUserIdFromParams) {
-        // Select first channel if no specific DM and no channel selected.
-        const firstEligibleChannel = channels.find(ch => !ch.isDM || (ch.isDM && ch.otherUserId !== user.uid));
-        if (firstEligibleChannel) {
-             handleSelectChannel(firstEligibleChannel); 
-        }
+    } else if (!selectedChannel && channels.length > 0) { // No DM param and no channel selected, select default
+        channelToSelect = channels.find(ch => !ch.isDM || (ch.isDM && ch.otherUserId !== user.uid)) || null;
     }
-  }, [searchParams, channels, user, loadingChannels, handleSelectChannel, ensureDmChannelExists, selectedChannel]);
 
+    if (channelToSelect && selectedChannel?.id !== channelToSelect.id) {
+        handleSelectChannel(channelToSelect);
+    } else if (!selectedChannel && !dmUserIdFromParams && channels.length === 0) {
+        // No channels available and no DM param
+        setLoadingMessages(false);
+    }
+
+  }, [searchParams, channels, user, authLoading, loadingChannels, handleSelectChannel, ensureDmChannelExists, selectedChannel?.id]);
+
+
+  // Fetch messages for the selected channel
   useEffect(() => {
-    if (!selectedChannel || !firestore || !user) {
+    if (!selectedChannel || !selectedChannel.id || !firestore || !user) {
       setMessages([]);
       setLoadingMessages(false);
       return;
@@ -349,7 +400,7 @@ export default function MessagesPage() {
       setMessages(fetchedMessages);
       setLoadingMessages(false);
     }, (error) => {
-      console.error(`Error fetching messages for channel ${selectedChannel.id}:`, error);
+      console.error(`Error fetching messages for channel ${selectedChannel?.id}:`, error);
       setMessages([]);
       setLoadingMessages(false);
       toast({ variant: 'destructive', title: 'Error', description: 'Could not load messages for this channel.' });
@@ -357,7 +408,7 @@ export default function MessagesPage() {
     return () => {
       unsubscribeMessages();
     };
-  }, [selectedChannel, firestore, user, toast]);
+  }, [selectedChannel?.id, firestore, user, toast]); // Depend only on selectedChannel.id
 
   useEffect(() => {
     if (messages.length > 0 || (showChatViewOnMobile && selectedChannel)) { 
@@ -488,7 +539,7 @@ export default function MessagesPage() {
               {isMobile && (
                 <Button variant="ghost" size="icon" className="mr-2 text-primary" onClick={() => {
                   setShowChatViewOnMobile(false);
-                  router.replace('/messages', { scroll: false }); 
+                  // router.replace('/messages', { scroll: false }); // Optional: clear URL param
                 }}>
                   <ArrowLeft className="h-5 w-5" />
                 </Button>
@@ -560,7 +611,7 @@ export default function MessagesPage() {
       ) : (
         <CardContent className="flex-1 p-4 flex items-center justify-center">
           <p className="text-muted-foreground">
-            {loadingChannels && channels.length === 0 ? "Loading available channels..." : "Select a channel or user to start chatting."}
+            {loadingChannels && channels.length === 0 && !selectedChannel ? "Loading available channels..." : "Select a channel or user to start chatting."}
           </p>
         </CardContent>
       )}
@@ -576,3 +627,4 @@ export default function MessagesPage() {
     </PageWrapper>
   );
 }
+
