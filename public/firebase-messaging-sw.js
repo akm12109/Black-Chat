@@ -6,20 +6,19 @@ importScripts("https://www.gstatic.com/firebasejs/9.22.1/firebase-messaging-comp
 
 // --- Firebase Project Configuration ---
 // These values should match the ones used in your main application (src/lib/firebase.ts)
-// and should be for the 'chat-akmx' project.
 const firebaseConfig = {
-  apiKey: "AIzaSyBBn_9sXiqfCcQ_RWm3FNUVEC2_wInKdqk",
-  authDomain: "chat-akmx.firebaseapp.com",
-  projectId: "chat-akmx",
-  storageBucket: "chat-akmx.firebasestorage.app",
-  messagingSenderId: "604325744401",
-  appId: "1:604325744401:web:57f38e056b00bb02da06b0",
-  measurementId: "G-GSX7G0799G" 
+  apiKey: "AIzaSyBwsgPN_ZriWzPo9b7xodH-MtWyy_A7MYI",
+  authDomain: "black-chat-1.firebaseapp.com",
+  projectId: "black-chat-1",
+  storageBucket: "black-chat-1.firebasestorage.app",
+  messagingSenderId: "710462889318",
+  appId: "1:710462889318:web:3efe20d79c7a8b5eb3bca7",
+  measurementId: "G-3SNKN8NRN0" 
 };
 // --- End of Firebase Project Configuration ---
 
 
-if (firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_FIREBASE_API_KEY" && firebaseConfig.apiKey !== "AIzaSyBBn_9sXiqfCcQ_RWm3FNUVEC2_wInKdqk_PLACEHOLDER" && firebaseConfig.apiKey !== "AIzaSyBwsgPN_ZriWzPo9b7xodH-MtWyy_A7MYI_PLACEHOLDER") { // Added a check to avoid re-init with placeholders if old file was cached
+if (firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_FIREBASE_API_KEY_PLACEHOLDER" && !firebaseConfig.apiKey.includes("_PLACEHOLDER")) {
     try {
         firebase.initializeApp(firebaseConfig);
 
@@ -35,7 +34,7 @@ if (firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_FIREBASE_API_KEY" &
           const notificationTitle = payload.notification?.title || "New Alert";
           const notificationOptions = {
             body: payload.notification?.body || "You have a new update.",
-            icon: payload.notification?.icon || "/logo-192.png", // Ensure you have a logo-192.png in /public
+            icon: payload.notification?.icon || "/logo.png", // Updated to use logo.png
             data: payload.data // Pass along any data for click actions
           };
 
@@ -51,7 +50,7 @@ if (firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_FIREBASE_API_KEY" &
                 clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
                     // Check if a window with the target URL is already open.
                     for (const client of clientList) {
-                        if (client.url === targetUrl && 'focus' in client) {
+                        if (new URL(client.url).pathname === targetUrl && 'focus' in client) {
                             return client.focus();
                         }
                     }
@@ -68,6 +67,6 @@ if (firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_FIREBASE_API_KEY" &
         console.error("[firebase-messaging-sw.js] Error initializing Firebase or setting up background listener:", error);
     }
 } else {
-    console.warn("[firebase-messaging-sw.js] Firebase configuration is missing valid values. Service worker will not function correctly.");
+    console.warn("[firebase-messaging-sw.js] Firebase configuration is missing valid values or is using a placeholder. Service worker will not function correctly.");
 }
 

@@ -25,7 +25,7 @@ import {
   Share2, 
   CalendarCheck, 
   Settings, 
-  UserCircle,
+  UserCircle as UserCircleIcon, // Aliased to avoid conflict
   Phone,
   FileText,
   GitBranch,
@@ -50,7 +50,7 @@ const navItems = [
 ];
 
 const accountItems = [
-  { href: "/profile", label: "Profile", icon: UserCircle },
+  { href: "/profile", label: "Profile", icon: UserCircleIcon },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -109,7 +109,8 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon" className="border-r border-border/50">
       <SidebarHeader className="p-4">
-        <Logo />
+        {/* Ensure iconSize prop is appropriate for an image logo */}
+        <Logo iconSize={32} textSize="text-xl" />
       </SidebarHeader>
       <SidebarContent className="p-2">
         <SidebarMenu>

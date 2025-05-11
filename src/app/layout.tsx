@@ -13,6 +13,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: 'Black HAT Commit',
   description: 'A communication and planning app with a hacker aesthetic.',
+  icons: {
+    icon: '/logo.png', // Using logo.png as favicon
+  },
 };
 
 export default function RootLayout({

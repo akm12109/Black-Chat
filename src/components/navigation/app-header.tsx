@@ -40,6 +40,7 @@ export function AppHeader() {
       // No saved theme, default to dark
       setCurrentTheme('dark');
       document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark'); // Save the default
     }
   }, []);
 
@@ -76,12 +77,13 @@ export function AppHeader() {
           <PanelLeft className="h-5 w-5" />
         </Button>
         <div className="hidden md:block">
-         <Logo iconSize={24} textSize="text-xl" />
+         {/* Ensure iconSize prop is appropriate for an image logo */}
+         <Logo iconSize={32} textSize="text-xl" />
         </div>
       </div>
       
       <div className="md:hidden"> 
-        {!(sidebarIsMobileHook && openMobile) && <Logo iconSize={24} textSize="text-xl" />}
+        {!(sidebarIsMobileHook && openMobile) && <Logo iconSize={32} textSize="text-xl" />}
       </div>
 
       <div className="flex items-center gap-2 sm:gap-4">
@@ -93,7 +95,6 @@ export function AppHeader() {
           </Button>
         )}
         <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="Toggle theme" className="text-accent hover:text-glow-accent">
-          {/* Conditionally render based on currentTheme state, not just CSS classes for initial render correctness */}
           {currentTheme === 'light' ? (
             <Sun className="h-5 w-5 transition-all" />
           ) : (
